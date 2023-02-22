@@ -1,0 +1,193 @@
+opt_out_usage
+
+default_platform(:ios)
+
+setup_ci if ENV["CI"]
+
+package_json = load_json(json_path: "./package.json")
+app_json = load_json(json_path: "./app.json")
+
+private_lane :get_lane_name do
+  lane_name = ""
+
+  ARGV.each do |a|
+    lane_name = "#{a}"
+  end
+  lane_name
+end
+
+def get_android_google_json
+  load_json(json_path: "android/app/google-services.json")
+end
+
+
+#####################
+#### Google Play ####
+#####################
+
+platform :android do
+  desc "Submit a new build to App Distribution"
+  private_lane :app_distribution do
+    ENV["FIREBASEAPPDISTRO_APP"] = ENV["FIREBASE_ANDROID_DISTRIBUTION_APP_ID"]
+
+    latest_release = firebase_app_distribution_get_latest_release(
+      app: ENV["FIREBASEAPPDISTRO_APP"],
+    )
+
+    current_version_code = latest_release.nil? ? 0 : latest_release[:buildVersion].to_i
+
+    increment_version_code({ version_code: current_version_code + 1 })
+
+    gradle(
+      task: "clean assembleRelease",
+      project_dir: "./android",
+      print_command: true,
+      properties: {
+        "android.injected.version.name" => package_json["version"],
+      },
+    )
+
+    firebase_app_distribution(app: ENV["FIREBASEAPPDISTRO_APP"])
+  end
+
+  desc "Submit a new QA build to App Distribution"
+  lane :qa do
+    app_distribution
+  end
+
+  desc "Submit a new Staging build to App Distribution"
+  lane :staging do
+    app_distribution
+  end
+end
+
+
+#####################
+#### Apple Store ####
+#####################
+
+platform :ios do
+  before_all do |lane, options|
+    lane_name = lane.to_s
+
+    xcodeproj_path = "./ios/#{app_json['name']}.xcodeproj"
+    is_qa = lane_name == "qa"
+    is_staging = lane_name == "staging"
+    app_identifier = ENV["APP_IDENTIFIER_IOS"]
+    # onesignal_app_id = ENV["ONESIGNAL_APP_IDENTIFIER_IOS"]
+
+    ENV["FIREBASEAPPDISTRO_APP"] = ENV["FIREBASE_IOS_DISTRIBUTION_APP_ID"]
+
+   # Sign into Apple
+    app_store_connect_api_key(
+      key_id: ENV["APP_STORE_CONNECT_API_KEY_KEY_ID"],
+      issuer_id: ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"],
+      key_content:  ENV["APP_STORE_CONNECT_API_KEY_CONTENT"]
+    )
+
+    # Grab certificates
+    match_type = is_qa || is_staging ? "adhoc" : "appstore"
+
+    profile_mappings = match(
+      type: match_type,
+      app_identifier: [app_identifier],
+      readonly: true
+      # app_identifier: [app_identifier, onesignal_app_id],
+    )
+
+    # Set up Xcode project
+
+    # update_app_group_identifiers(
+    #   entitlements_file: "ios/Snack/Snack.entitlements",
+    #   app_group_identifiers: ["group.#{app_identifier}.onesignal"],
+    # )
+
+    update_project_team(
+      path: xcodeproj_path,
+      teamid: ENV["FASTLANE_TEAM_ID"],
+    )
+
+    update_code_signing_settings(
+      path: xcodeproj_path,
+      use_automatic_signing: false,
+      code_sign_identity: "Apple Distribution",
+      profile_name: profile_mappings[app_identifier],
+      bundle_identifier: app_identifier,
+      targets: [app_json["name"]]
+    )
+
+    # update_code_signing_settings(
+    #   path: xcodeproj_path,
+    #   use_automatic_signing: false,
+    #   code_sign_identity: "Apple Distribution",
+    #   profile_name: profile_mappings[onesignal_app_id],
+    #   bundle_identifier: onesignal_app_id,
+    #   targets: ["OneSignalNotificationServiceExtension"],
+    # )
+
+    # Update build number
+    new_build_number = 1
+
+    if is_qa || is_staging
+      latest_release = firebase_app_distribution_get_latest_release(
+        app: ENV["FIREBASEAPPDISTRO_APP"],
+      )
+
+      new_build_number += latest_release.nil? ? 0 : latest_release[:buildVersion].to_i
+    else
+      new_build_number += latest_testflight_build_number
+    end
+
+    increment_build_number(
+      xcodeproj: xcodeproj_path,
+      build_number: new_build_number,
+    )
+
+    # Set version number
+    increment_version_number(
+      version_number: package_json["version"],
+      xcodeproj: xcodeproj_path,
+    )
+
+    # Build app
+    app_export_method = is_qa || is_staging ? "ad-hoc" : "app-store"
+
+    build_app(
+      workspace: "./ios/#{app_json['name']}.xcworkspace",
+      configuration: "Release",
+      clean: true,
+      export_method: app_export_method,
+      include_symbols: true,
+      include_bitcode: true
+    )
+  end
+
+  desc "Push a new QA build to App Distribution"
+  lane :qa do
+    firebase_app_distribution(
+      app: ENV["FIREBASEAPPDISTRO_APP"]
+    )
+  end
+
+  desc "Push a new Staing build to App Distribution"
+  lane :staging do
+    firebase_app_distribution(app: ENV["FIREBASEAPPDISTRO_APP"])
+  end
+
+  desc "Push a new client_staging build to TestFlight"
+  lane :client_staging do
+    upload_to_testflight
+
+    download_dsyms
+  end
+
+  desc "Push a new prod build to TestFlight"
+  lane :prod do
+    upload_to_testflight
+
+    download_dsyms
+  end
+  # after_all do |lane, options|
+  #   sentry_upload_dif(path: "./ios")
+  # end
+end

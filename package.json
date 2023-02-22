@@ -1,0 +1,23 @@
+{
+  "name": "@sugaith/create-fastlane-config",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "@sugaith/create-fastlane-config": "./src/create-fastlane-config.js"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "repository": {
+    "url": "https://github.com/sugaith/create-fastlane-config.git"
+  },
+  "dependencies": {
+    "fs-extra": "11.1.0"
+  },
+  "peerDependencies": {
+    "nx": "15.6.3",
+    "tslib": "2.5.0"
+  },
+  "main": "./src/index.js",
+  "types": "./src/index.d.ts"
+}

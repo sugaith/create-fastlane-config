@@ -1,0 +1,8 @@
+
+for_platform :ios do
+    app_identifier(ENV['APP_IDENTIFIER_IOS'])
+end
+
+for_platform :android do
+    app_identifier(ENV['APP_IDENTIFIER_ANDROID'])
+end
